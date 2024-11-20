@@ -8,9 +8,20 @@ output: html_document
 
 ```{r}
 library(readxl)
+library(kableExtra)
+library(mice)
 library(dplyr)
+library(ggbeeswarm)
+library(corrplot)
 library(tidyverse)
+library(gridExtra)
 library(tidyr)
+library(modelsummary)
+library(gtsummary)
+library(chemometrics)
+library(vcd)
+library(naniar)
+library(misty)
 library(rlang)
 library(ggplot2)
 
@@ -30,24 +41,22 @@ box_plot = function(data = train, var){
   lower_cutoff <- first_quartile - 3 * iqr
   upper_cutoff <- third_quartile + 3 * iqr
   
-  ggplot(data, aes(x = !!var)) +
-  geom_boxplot(fill = "green") +
-  geom_vline(xintercept = lower_cutoff, color = "red", linetype = "dashed", size = 1) +
-  geom_vline(xintercept = upper_cutoff, color = "red", linetype = "dashed", size = 1) +
-  labs(title = "Boxplot with Extreme Outlier Cutoffs", x = quo_text(var), y = "")
+  p1 = ggplot(data, aes(x = !!var)) +
+    geom_boxplot(color="darkblue", fill = "lightblue") +
+    geom_vline(xintercept = lower_cutoff, color = "red", linetype = "dashed", size = 1) +
+    geom_vline(xintercept = upper_cutoff, color = "red", linetype = "dashed", size = 1) +
+    theme_bw()
+  
+  p2 = ggplot(data, aes(y = "", x = !!var)) +
+    geom_quasirandom(color = "lightblue") + theme_bw() 
+  
+  p3 = ggplot(data, aes(x = !!var)) +
+    geom_density(color="darkblue", fill="lightblue")  + theme_bw()
+  
+  grid.arrange(p1, p2,p3, nrow = 1)
   
 }
 
-```
-
-
-
-
-# Analisis explotaori
-
-```{r}
-str(train)
-summary(train)
 ```
 
 # Identificador
@@ -57,7 +66,113 @@ La variable geography té tants valors ´ncis co obervacions té la base de trai
 ```{r}
 row.names(train) = train$geography
 train = train %>% select(-geography)
+
+row.names(test) = test$geography
+test = test %>% select(-geography)
 ```
+
+
+# Analisis explotaori
+
+```{r}
+str(train)
+datasummary_skim(train)
+```
+
+
+
+# Factors
+
+
+S'observa qe la variable binnedinc és na variable categorica, però no ñes de tips factor. La transformem a les bases de train i test
+
+```{r}
+train = train %>% mutate(binnedinc = factor(binnedinc))
+test = test %>% mutate(binnedinc = factor(binnedinc))
+```
+
+
+# Duplicats a les bases de dades
+
+No n'hi ha 
+
+```{r}
+which(duplicated(train))
+which(duplicated(test))
+```
+
+
+# Analisis de la qualitat de dades
+
+
+Hi ha 3 variables amb missings la variable pctsomecol18_24 té n total de 75% de missings per tant decidim eliminar-la de l'analisis
+Les variables pctprivatecoveragealone pctemployed16_over no superen el 20% de valors faltants per tant decidim manterni-les a la base de dades i tractar-les amb imptacions més endevant
+
+
+```{r}
+missing_data <- train %>%
+  summarise(across(everything(), ~sum(is.na(.)))) %>%
+  pivot_longer(everything(), names_to = "variable", values_to = "missing_count") %>%
+  mutate(total_count = nrow(train)) %>%
+  mutate(missing_percentage = (missing_count / total_count) * 100)
+
+ggplot(missing_data, aes(x = missing_percentage, y = fct_reorder(variable, missing_percentage), xend = 0)) +
+  geom_segment(color = "blue") +
+  geom_point(color = "blue") + 
+    geom_text(aes(label =  missing_count), vjust = 0.5,hjust = -0.2,size =3.5) + 
+  theme_bw() + xlim(0, 30) + 
+  labs(title = "Observacions faltants per variable",
+       x = "Variable",
+       y = "Percentatge d'observacions faltants") 
+```
+
+
+```{r}
+missing_data <- test %>%
+  summarise(across(everything(), ~sum(is.na(.)))) %>%
+  pivot_longer(everything(), names_to = "variable", values_to = "missing_count") %>%
+  mutate(total_count = nrow(test)) %>%
+  mutate(missing_percentage = (missing_count / total_count) * 100)
+
+ggplot(missing_data, aes(x = missing_percentage, y = fct_reorder(variable, missing_percentage), xend = 0)) +
+  geom_segment(color = "blue") +
+  geom_point(color = "blue") + 
+    geom_text(aes(label =  missing_count), vjust = 0.5,hjust = -0.2,size =3.5) + 
+  theme_bw() + xlim(0, 30) + 
+  labs(title = "Observacions faltants per variable",
+       x = "Variable",
+       y = "Percentatge d'observacions faltants") 
+```
+
+```{r}
+train = train %>% select(-pctsomecol18_24)
+test = test %>% select(-pctsomecol18_24)
+```
+
+
+# Son missngs aleatoris?
+
+El p-val proprocionar pel test de little no ens permet rebtar la $H_{0}$ per tant no es pot afirmar qe els issinf no sigin \textit{Missing Copletly at Random (MCAR)}
+
+```{r}
+mcar_test(train)
+```
+
+
+## Resposta target_deathrate
+
+No noral
+
+```{r}
+datasummary_skim(as.data.frame(train[,"target_deathrate"]))
+shapiro.test(train$target_deathrate)
+
+
+# Plot with vertical lines for cutoffs
+box_plot(var = "target_deathrate")
+
+```
+
 
 ## Var 1 avganncount
 
@@ -65,167 +180,97 @@ train = train %>% select(-geography)
 olts otliers grans -> a la base hi ha estats ab poblacions olt diferents, espere qe els estats grans tingin na itana de orts és gran
 
 ```{r}
-summary(train$avganncount)
+datasummary_skim(as.data.frame(train[,"avganncount"]))
 shapiro.test(train$avganncount)
-ggplot(train, aes(x=avganncount)) +
-  geom_density(color="darkblue", fill="lightblue")  + theme_bw()
+
 
 box_plot(var = "avganncount")
-
-
-sum(is.na(train$avganncount))
-
 ```
- 
+
 Otliers gres
 
 
-```{r}
-ind = which(train$avganncount > quantile(train$avganncount, 0.75) + 3 * IQR(train$avganncount) | train$avganncount < quantile(train$avganncount, 0.25) - 3 * IQR(train$avganncount))
-row.names(train)[ind]
-
-```
-
-Solció ->  categoritzar
-
- 
- 
-# Var 2 
+ ## Var 2 avgdeathsperyear
  
 ```{r}
-summary(train$avgdeathsperyear)
+datasummary_skim(as.data.frame(train[,"avgdeathsperyear"]))
 shapiro.test(train$avgdeathsperyear)
-ggplot(train, aes(x=avgdeathsperyear))+
-  geom_density(color="darkblue", fill="lightblue")  + theme_bw()
-
- ggplot(train, aes(x = avgdeathsperyear)) +
-  geom_boxplot(fill = "green")
- 
- 
- 
- 
-```
- 
-
-ateix problea ateixa solcio falta decidir els ctoffs -> possible són els qantils
-
-
-# Var 3
-
-No noral
-
-```{r}
-summary(train$target_deathrate)
-shapiro.test(train$target_deathrate)
-ggplot(train, aes(x=target_deathrate))+
-  geom_density(color="darkblue", fill="lightblue")  + theme_bw()
-
-
-# Plot with vertical lines for cutoffs
-box_plot(var = "target_deathrate")
+box_plot(var = "avgdeathsperyear")
 ```
 
-1 sol otler gre -> eliinar ? NA ?
+## Var 4 incidencerate
+
+No noral 2 bastants olteriers severs i no severs -> categoritzar
 
 ```{r}
-ind = which(train$target_deathrate > quantile(train$target_deathrate, 0.75) + 3 * IQR(train$target_deathrate) | train$target_deathrate < quantile(train$target_deathrate, 0.25) - 3 * IQR(train$target_deathrate))
-row.names(train)[ind]
-```
-
-# Var 4
-
-No noral 2 otliers gres
-
-```{r}
-summary(train$incidencerate)
+datasummary_skim(as.data.frame(train[,"incidencerate"]))
 shapiro.test(train$incidencerate)
-ggplot(train, aes(x=incidencerate))+
-  geom_density(color="darkblue", fill="lightblue")  + theme_bw()
-
-
-# Plot with vertical lines for cutoffs
 box_plot(var = "incidencerate")
 ```
 
-# Var 5
 
-noral 2 batants otliers gres Log? 
+
+
+## Var 5 medincome
+
+assietria positiva
+
 
 ```{r}
-summary(train$medincome)
+datasummary_skim(as.data.frame(train[,"medincome"]))
 shapiro.test(train$medincome)
-ggplot(train, aes(x=medincome))+
-  geom_density(color="darkblue", fill="lightblue")  + theme_bw()
 
 
-# Plot with vertical lines for cutoffs
+skewness(train$medincome)
 box_plot(var = "medincome")
 ```
 
-```{r}
-ind = which(train$medincome > quantile(train$medincome, 0.75) + 3 * IQR(train$medincome) | train$medincome < quantile(train$medincome, 0.25) - 3 * IQR(train$medincome))
-row.names(train)[ind]
-```
 
-# Var 6
+## Var 6 popest2015
 
 olts otliers -> categoritzar
 
 
 ```{r}
-summary(train$popest2015)
+datasummary_skim(as.data.frame(train[,"popest2015"]))
 shapiro.test(train$popest2015)
-ggplot(train, aes(x=popest2015))+
-  geom_density(color="darkblue", fill="lightblue")  + theme_bw()
-
-
-# Plot with vertical lines for cutoffs
 box_plot(var = "popest2015")
 ```
 
-# Var 7
 
-no noral 2 no oltiers gres 
+
+
+
+## Var 7 povertypercent
+
+no noral 2 no oltiers severs -> deixar sense categoritzar
 
 ```{r}
-summary(train$povertypercent)
+datasummary_skim(as.data.frame(train[,"povertypercent"]))
 shapiro.test(train$povertypercent)
-ggplot(train, aes(x=povertypercent))+
-  geom_density(color="darkblue", fill="lightblue")  + theme_bw()
-
-
-# Plot with vertical lines for cutoffs
 box_plot(var = "povertypercent")
 ```
 
-# Var 8
+## Var 8 studypercap
 
-no noral 2 no oltiers gres 
 
 ```{r}
-summary(train$studypercap)
+datasummary_skim(as.data.frame(train[,"studypercap"]))
 shapiro.test(train$studypercap)
-ggplot(train, aes(x=studypercap))+
-  geom_density(color="darkblue", fill="lightblue")  + theme_bw()
-
-
-# Plot with vertical lines for cutoffs
 box_plot(var = "studypercap")
 ```
 
-
-
-# Var 9
+ 
+## Var 9 binnedinc
 
 variable categorica qe s'ha de transforar a factor -> olt balanceada
 
 
 ```{r}
-summary(train$binnedinc)
+datasummary_skim(as.data.frame(train[,"binnedinc"]))
 
 train = train %>% mutate_at(vars(binnedinc),factor)
 
-summary(train$binnedinc)
 
 categ = train %>% 
       select(binnedinc) %>% 
@@ -239,8 +284,8 @@ ggplot(categ, aes(x = binnedinc,y = Perc)) +
   geom_bar(stat = "identity", position = position_dodge(width = 1),color = "black", fill = "skyblue") +
   labs(x = "binnedinc", y = "Percentatge") +
   ggtitle("Barplot of binnedinc") +
-  theme(text = element_text(size = 15), 
-        axis.text.x = element_text(angle = 70, vjust = 0.5, hjust = 0.5)) + theme_minimal() + 
+  theme(text = element_text(size = 15), axis.text.x = element_text(angle = 70, vjust = 0.5, hjust = 0.5)) + 
+  theme_bw() + 
   geom_text(aes(label = count), position = position_dodge(width = 0.9), hjust = 0.5, vjust = -1, size = 5) + 
   theme(axis.text.x = element_text(size = 12,angle = 45,hjust = 1),  
         axis.text.y = element_text(size = 14),  
@@ -249,145 +294,395 @@ ggplot(categ, aes(x = binnedinc,y = Perc)) +
 
 ```
 
-# Var 10
+## Var 10 medianage
 
 no noral olts otliers  eliinar o bidar edats qe no tenen sentit > 59 és el pnt qe té sentit. Tb es pot exclore i fer servir la medianagemale i medianagefemale
 
 ```{r}
-summary(train$medianage)
+datasummary_skim(as.data.frame(train[,"medianage"]))
 shapiro.test(train$medianage)
-ggplot(train, aes(x=medianage))+
-  geom_density(color="darkblue", fill="lightblue")  + theme_bw()
-
-
-# Plot with vertical lines for cutoffs
 box_plot(var = "medianage")
 ```
 
 
+```{r}
+train = train %>% mutate(medianage = if_else(medianage > 59, NA,medianage))
+test = test %>% mutate(medianage = if_else(medianage > 66, NA,medianage))
+
+box_plot(var = "medianage")
+
+box_plot(var = "medianage")
+shapiro.test(train$medianage)
+```
 
 
 
-# Var 11
+## Var 11 medianagemale
 
 no noral no otliers
 
 ```{r}
-summary(train$medianagemale)
+datasummary_skim(as.data.frame(train[,"medianagemale"]))
 shapiro.test(train$medianagemale)
-ggplot(train, aes(x=medianagemale))+
-  geom_density(color="darkblue", fill="lightblue")  + theme_bw()
-
-
-# Plot with vertical lines for cutoffs
 box_plot(var = "medianagemale")
 ```
 
 
 
-# Var 12
+## Var 12 medianagefemale
 
 no noral no otliers
 
 ```{r}
-summary(train$medianagefemale)
+datasummary_skim(as.data.frame(train[,"medianagefemale"]))
 shapiro.test(train$medianagefemale)
-ggplot(train, aes(x=medianagefemale))+
-  geom_density(color="darkblue", fill="lightblue")  + theme_bw()
-
-
-# Plot with vertical lines for cutoffs
 box_plot(var = "medianagefemale")
 ```
 
 
-# Var 13
+## Var 13 percentmarried
 
 no noral no otliers
 
 ```{r}
-summary(train$percentmarried)
+datasummary_skim(as.data.frame(train[,"percentmarried"]))
 shapiro.test(train$percentmarried)
-ggplot(train, aes(x=percentmarried))+
-  geom_density(color="darkblue", fill="lightblue")  + theme_bw()
-
-
-# Plot with vertical lines for cutoffs
 box_plot(var = "percentmarried")
 ```
 
 
-# Var 14
+## Var 14 pctnohs18_24
 
 no noral 3 otliers
 
 ```{r}
-summary(train$pctnohs18_24)
+datasummary_skim(as.data.frame(train[,"pctnohs18_24"]))
 shapiro.test(train$pctnohs18_24)
-ggplot(train, aes(x=pctnohs18_24))+
-  geom_density(color="darkblue", fill="lightblue")  + theme_bw()
-
-
-# Plot with vertical lines for cutoffs
 box_plot(var = "pctnohs18_24")
 ```
 
 
 
-# Var 15
+## Var 15 pcths18_24
 
 no noral no otliers
 
 ```{r}
-summary(train$pcths18_24)
+datasummary_skim(as.data.frame(train[,"pcths18_24"]))
 shapiro.test(train$pcths18_24)
-ggplot(train, aes(x=pcths18_24))+
-  geom_density(color="darkblue", fill="lightblue")  + theme_bw()
-
-
-# Plot with vertical lines for cutoffs
 box_plot(var = "pcths18_24")
 ```
 
 
-# Var 15
+## Var 16 pctbachdeg18_24
 
-olts nas -> eliinar var
+olt otliers gres -> categoritzar
 ```{r}
-summary(train$pctsomecol18_24)
-shapiro.test(train$pctsomecol18_24)
-ggplot(train, aes(x=pctsomecol18_24))+
-  geom_density(color="darkblue", fill="lightblue")  + theme_bw()
+datasummary_skim(as.data.frame(train[,"pctbachdeg18_24"]))
 
-
-# Plot with vertical lines for cutoffs
-box_plot(var = "pctsomecol18_24")
+shapiro.test(train$pctbachdeg18_24)
+box_plot(var = "pctbachdeg18_24")
 ```
 
 
-# NAs
 
-Noes 3 vas ab NAs , na > 5% - eliinar?
+
+## Var 17 pcths25_over
 
 ```{r}
-missing_data <- train %>%
-  summarise(across(everything(), ~sum(is.na(.)))) %>%
-  pivot_longer(everything(), names_to = "variable", values_to = "missing_count") %>%
-  # Calculate the total number of observations
-  mutate(total_count = nrow(train)) %>%
-  # Calculate the percentage of missing data
-  mutate(missing_percentage = (missing_count / total_count) * 100)
-
-ggplot(missing_data, aes(x = reorder(variable, -missing_percentage), y = missing_percentage)) +
-  geom_bar(stat = "identity", fill = "skyblue") +
-  geom_text(aes(label =  missing_count), vjust = 0.5,hjust = -0.2,size =3.5) + # Add percentage labels
-  theme_minimal() +
-  labs(title = "Observacions faltants per variable",
-       x = "Variable",
-       y = "Percentatge d'observacions faltants") +
-  coord_flip() +    ylim(0, 100)
-
+datasummary_skim(as.data.frame(train[,"pcths25_over"]))
+shapiro.test(train$pcths25_over)
+box_plot(var = "pcths25_over")
 ```
+
+## Var 18 pctbachdeg25_over
+
+pocs otliers gres
+
+```{r}
+datasummary_skim(as.data.frame(train[,"pcths25_over"]))
+shapiro.test(train$pcths25_over)
+box_plot(var = "pctbachdeg25_over")
+```
+
+
+
+## Var 19 pctemployed16_over
+
+
+```{r}
+datasummary_skim(as.data.frame(train[,"pctemployed16_over"]))
+shapiro.test(train$pctemployed16_over)
+box_plot(var = "pctemployed16_over")
+```
+
+## Var 20 pctunemployed16_over
+
+
+complmentaria a la var anterior -> potser eliminar
+
+```{r}
+datasummary_skim(as.data.frame(train[,"pctunemployed16_over"]))
+shapiro.test(train$pctunemployed16_over)
+box_plot(var = "pctunemployed16_over")
+```
+
+
+
+## Var 21 pctprivatecoverage
+
+
+
+```{r}
+datasummary_skim(as.data.frame(train[,"pctunemployed16_over"]))
+shapiro.test(train$pctprivatecoverage)
+box_plot(var = "pctprivatecoverage")
+```
+
+
+## Var 22 pctprivatecoveragealone
+
+
+```{r}
+datasummary_skim(as.data.frame(train[,"pctprivatecoveragealone"]))
+shapiro.test(train$pctprivatecoveragealone)
+box_plot(var = "pctprivatecoveragealone")
+```
+
+## Var 23 pctempprivcoverage
+
+casi normal
+
+```{r}
+datasummary_skim(as.data.frame(train[,"pctempprivcoverage"]))
+shapiro.test(train$pctempprivcoverage)
+box_plot(var = "pctempprivcoverage")
+```
+
+## Var 24 pctpubliccoverage
+
+normal
+
+```{r}
+datasummary_skim(as.data.frame(train[,"pctpubliccoverage"]))
+shapiro.test(train$pctpubliccoverage)
+box_plot(var = "pctpubliccoverage")
+```
+
+# Var 24
+
+
+```{r}
+datasummary_skim(as.data.frame(train[,"pctpubliccoverage"]))
+shapiro.test(train$pctpubliccoverage)
+box_plot(var = "pctpubliccoveragealone")
+```
+
+
+# Var 25
+
+distr exp -> no elioinar otliers
+
+
+```{r}
+datasummary_skim(as.data.frame(train[,"pctwhite"]))
+shapiro.test(train$pctwhite)
+box_plot(var = "pctwhite")
+```
+
+
+
+# Var 26
+
+distr exp -> no elioinar otliers
+
+
+```{r}
+datasummary_skim(as.data.frame(train[,"pctblack"]))
+shapiro.test(train$pctblack)
+box_plot(var = "pctblack")
+```
+
+
+# Var 26
+
+distr exp -> no elioinar otliers
+
+
+```{r}
+datasummary_skim(as.data.frame(train[,"pctasian"]))
+shapiro.test(train$pctasian)
+box_plot(var = "pctasian")
+```
+
+
+# Var 27
+
+distr exp -> no elioinar otliers
+
+
+```{r}
+datasummary_skim(as.data.frame(train[,"pctotherrace"]))
+shapiro.test(train$pctotherrace)
+box_plot(var = "pctotherrace")
+```
+
+
+# Var 28
+
+
+
+```{r}
+datasummary_skim(as.data.frame(train[,"pctmarriedhouseholds"]))
+shapiro.test(train$pctmarriedhouseholds)
+box_plot(var = "pctmarriedhouseholds")
+```
+
+
+```{r}
+datasummary_skim(as.data.frame(train[,"birthrate"]))
+shapiro.test(train$birthrate)
+box_plot(var = "birthrate")
+```
+
+
+# Analisi ltivariant
+
+## Otliers ltivariants - vars numeric
+
+
+##  Corrplot
+
+
+```{r}
+corrplot(cor(train %>% select_if(is.numeric), use = "pairwise.complete.obs"),type = "lower",  tl.col = "black",title = "Correlació de Pearson")
+
+corrplot(cor(train %>% select_if(is.numeric), use = "pairwise.complete.obs",method = "spearman"),type = "lower",  tl.col = "black",title = "Correlació de Pearson")
+```
+
+
+
+which(sapply(train, is.numeric))
+
+res = Moutlier(na.omit(train %>% select_if(is.numeric)),quantile = 0.95,plot = F)
+
+res_df <- data.frame(md = res$md, rd = res$rd, labels = rownames(na.omit(train %>% select_if(is.numeric))))
+
+ggplot(res_df, aes(x = md, y = rd)) +
+  geom_point() + 
+  geom_vline(xintercept = res$cutoff, color = "red") +  
+  geom_hline(yintercept = res$cutoff, color = "red") +  
+  ggtitle("Classical Mahalanobis vs Robust") +
+  theme_minimal()
+
+outliers = which(res$md > res$cutoff & res$rd > res$cutoff)
+outliers  
+
+train = train[-which(res$md > res$cutoff & res$rd > res$cutoff),]
+
+
+
+
+
+
+## Tests d'independència i correlacions - numerics
+
+
+```{r,warning=FALSE}
+corr_num = colnames(train %>% select_if(is.numeric))
+corr_num = t(combn(corr_num,m = 2))
+
+cors = as.data.frame(t(sapply(1:nrow(corr_num), function(i) {
+  cor_pears = cor(train[corr_num[i,1]], train[corr_num[i,2]], use = "pairwise.complete.obs")
+  cor_spear = cor(train[corr_num[i,1]], train[corr_num[i,2]], use = "pairwise.complete.obs",method = "spearman")
+  return(c(corP = cor_pears,corS = cor_spear))
+})))
+
+corr_num = data.frame(Variable = corr_num, Corr_Pearson = cors$corP,Corr_Spearman = cors$corS)
+corr_num = corr_num %>% arrange(desc(abs(Corr_Pearson)))
+
+kable(corr_num,caption = "Correlació Indicadors i Edat", align = "c") %>% 
+  kable_styling(position = "center", 
+                latex_options = "HOLD_position",  font_size = 15)     
+```
+
+## Numèrics ~ Categòriques
+
+Varibales categoriqes relacionades ab les numeric
+
+```{r}
+num_cat = as.data.frame(expand_grid(Num = colnames(train %>% select_if(is.numeric)), Cat = colnames(train %>% select_if(is.factor))))
+
+tests = as.data.frame(t(sapply(1:nrow(num_cat), function(i){
+  print(i)
+  KKW = round(kruskal.test(train[[num_cat[i,1]]] ~ train[[num_cat[i,2]]])$p.value,6)
+  n = nrow(na.omit(train[,c(num_cat[i,1],num_cat[i,2])]))
+  return(c("Kruskall Wallis Pval" = KKW,Obs_used = n))
+})))
+
+num_cat = bind_cols(num_cat,tests) 
+num_cat = num_cat %>% arrange(`Kruskall Wallis Pval`)
+
+kable(num_cat,caption = "Assosiació Indicadors Numèrics i Quality Of Life", align = "c") %>% 
+  kable_styling(position = "center", 
+                latex_options = "HOLD_position",  font_size = 15) 
+```
+
+
+# Entre categoriqes
+
+Tb relacions entre categoriqes
+
+
+
+
+# Imputacions
+
+les Imputations no fan variar la distrib. de les dades
+
+```{r}
+train_i =  complete(mice(train))
+
+lapply(colnames(train),function(i){
+  a = summary(train[,i])
+  b = summary(train_i[,i])
+  a = as.data.frame(bind_rows(a,b))
+  row.names(a) = c("Original","Post Imputations")
+  print(a)
+})
+```
+
+
+
+
+```{r}
+test_i =  complete(mice(test))
+
+lapply(colnames(test),function(i){
+  a = summary(test[,i])
+  b = summary(test_i[,i])
+  a = as.data.frame(bind_rows(a,b))
+  row.names(a) = c("Original","Post Imputations")
+  print(a)
+})
+```
+
+
+```{r}
+write.xlsx(list("train_processed" = train_i,"test_processed" = test_i),paste0(path,"data_processed.xlsx"))
+```
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
